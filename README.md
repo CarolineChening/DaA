@@ -41,18 +41,6 @@ python web_app.py
 2. 获取认证token
 3. 在系统页面配置token并开启远程访问
 
-## 项目结构
-
-```
-DaA/
-├── web_app.py          # Flask后端API入口
-├── config/             # 配置文件（持仓数据、交易规则）
-├── data/               # 数据模块（行业数据、概念数据、龙虎榜）
-├── strategies/         # 策略模块（神奇九转、MACD、RSI等）
-├── research/           # 研究分析（大V观点、行业研究）
-├── utils/              # 工具函数（时间工具、调度器、远程访问）
-└── templates/          # 前端模板（HTML页面）
-```
 
 ## 免责声明
 
