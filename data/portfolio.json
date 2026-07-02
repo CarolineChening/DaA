@@ -1,0 +1,26 @@
+[
+  {
+    "symbol": "600111",
+    "name": "北方稀土",
+    "quantity": 200,
+    "cost_price": 45.066,
+    "purchase_date": "2026-06-01",
+    "industry": "稀土"
+  },
+  {
+    "symbol": "002920",
+    "name": "德赛西威",
+    "quantity": 100,
+    "cost_price": 105.55,
+    "purchase_date": "2026-05-15",
+    "industry": "汽车电子"
+  },
+  {
+    "symbol": "000333",
+    "name": "美的集团",
+    "quantity": 100,
+    "cost_price": 75.05,
+    "purchase_date": "2026-07-01",
+    "industry": "家电"
+  }
+]

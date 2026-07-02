@@ -1,0 +1,22 @@
+{
+    "name": "A股策略分析系统",
+    "short_name": "A股策略",
+    "description": "智能分析 · 科学决策 · 稳健投资",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#1a1a2e",
+    "theme_color": "#00d4ff",
+    "orientation": "portrait-primary",
+    "icons": [
+        {
+            "src": "/static/icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "/static/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        }
+    ]
+}
