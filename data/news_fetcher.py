@@ -297,14 +297,14 @@ class NewsFetcher:
             response.raise_for_status()
             response.encoding = 'utf-8'
             
-            stock_keywords = ['A股', '股票', '涨停', '跌停', '公告', '寒武纪', '茅台', '宁德', '比亚迪', '美的', '格力', '芯片', '半导体', '财经']
-            
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(response.text, 'html.parser')
             
+            entertainment_keywords = ['明星', '综艺', '电视剧', '电影', '演唱会', '绯闻', '恋情', '离婚', '结婚', '生子', '综艺', '直播带货']
+            
             for item in soup.find_all('a', href=True, limit=50):
                 text = item.text.strip()
-                if text and len(text) > 5 and any(keyword in text for keyword in stock_keywords):
+                if text and len(text) > 5 and not any(keyword in text for keyword in entertainment_keywords):
                     news_list.append({
                         'title': text,
                         'source': '今日头条热点',
@@ -328,14 +328,14 @@ class NewsFetcher:
             response.raise_for_status()
             response.encoding = 'utf-8'
             
-            stock_keywords = ['A股', '股票', '涨停', '跌停', '公告', '寒武纪', '茅台', '宁德', '比亚迪', '美的', '格力', '芯片', '半导体']
-            
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(response.text, 'html.parser')
             
+            entertainment_keywords = ['明星', '综艺', '电视剧', '电影', '演唱会', '绯闻', '恋情', '离婚', '结婚', '生子', '直播带货']
+            
             for item in soup.find_all('a', href=True, limit=50):
                 text = item.text.strip()
-                if text and len(text) > 5 and any(keyword in text for keyword in stock_keywords):
+                if text and len(text) > 5 and not any(keyword in text for keyword in entertainment_keywords):
                     news_list.append({
                         'title': text,
                         'source': '抖音热点',
@@ -359,14 +359,14 @@ class NewsFetcher:
             response.raise_for_status()
             response.encoding = 'utf-8'
             
-            stock_keywords = ['股票', '理财', '基金', '投资', 'A股', '茅台', '比亚迪']
-            
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(response.text, 'html.parser')
             
+            entertainment_keywords = ['明星', '综艺', '电视剧', '电影', '演唱会', '绯闻', '恋情', '离婚', '结婚', '生子', '直播带货']
+            
             for item in soup.find_all('a', href=True, limit=50):
                 text = item.text.strip()
-                if text and len(text) > 5 and any(keyword in text for keyword in stock_keywords):
+                if text and len(text) > 5 and not any(keyword in text for keyword in entertainment_keywords):
                     news_list.append({
                         'title': text,
                         'source': '小红书热点',
@@ -660,6 +660,19 @@ class NewsFetcher:
             self._fetch_cninfo_notice,
             self._fetch_international_news,
             self._fetch_eastmoney_stock_news,
+            self._fetch_weibo_hot,
+            self._fetch_jinritoutiao_hot,
+            self._fetch_douyin_hot,
+            self._fetch_xiaohongshu_hot,
+            self._fetch_reuters_chinese,
+            self._fetch_stcn,
+            self._fetch_notice_eastmoney,
+            self._fetch_jiemian,
+            self._fetch_yicai,
+            self._fetch_netease_finance,
+            self._fetch_tencent_finance,
+            self._fetch_bbc_chinese,
+            self._fetch_global_hot,
         ]
         
         with ThreadPoolExecutor(max_workers=4) as executor:
@@ -765,55 +778,225 @@ class NewsFetcher:
     
     def analyze_today_highlights(self, news_list):
         keyword_sentiments = {}
-        industry_keywords = [
-            '新能源', '光伏', '半导体', '芯片', 'AI', '人工智能', '大数据', '云计算',
+        
+        standalone_keywords = [
+            '新能源', '光伏', '半导体', 'AI', '大数据', '云计算',
             '医药', '创新药', '消费', '白酒', '家电', '房地产', '金融', '银行',
             '证券', '保险', '军工', '航空', '船舶', '汽车', '特斯拉', '比亚迪',
             '宁德时代', '贵州茅台', '五粮液', '北方稀土', '隆基绿能', '恒瑞医药',
-            '政策', '央行', '证监会', '监管', '利好', '利空', '降准', '降息',
-            '财政', '补贴', '支持', '改革', '开放', '规划', '目标', '会议',
-            '欧洲', '德国', '法国', '英国', '出口', '海外', '国际', '全球',
             '美的', '格力', '海尔', '空调', '冰箱', '家电出口', '高温', '热浪',
-            '订单', '销量', '卖爆', '热销', '增长', '爆发', '旺季', '需求'
+            'C端', 'B端', '上游', '下游', '中游', '国产化', '替代',
+            '涨价', '降价',
+            '算力', '数据中心', '服务器', '存储', '内存', '光刻', 'EDA',
+            '光伏组件', '逆变器', '锂电池', '储能', '充电桩', '换电',
+            '智能驾驶', '自动驾驶', '座舱', '域控制器', '激光雷达', '毫米波雷达',
+            '风电', '核电', '水电', '氢能', '碳减排', '碳中和', '碳交易',
+            '元宇宙', '虚拟现实', '增强现实', '数字经济', '工业互联网',
+            '大模型', '算力芯片', 'GPU', 'FPGA', 'NPU', 'CPU',
+            '生物科技', 'mRNA', '疫苗', '医疗器械', '医美', 'CXO',
+            '直播', '电商', '跨境', '新零售', '社区团购',
+            '半导体设备', '面板', 'PCB', 'CPO', '光模块', '连接器',
+            '军工电子', '航天', '导弹', '雷达', '船舶制造',
+            '房地产政策', '房贷', '公积金', '存量房', '保交楼',
+            '新能源汽车', '混动', '纯电', '电池回收', '固态电池',
+            '出口数据', '外贸', '订单回流', '东南亚', '越南', '印度'
         ]
+        
+        keyword_aliases = {
+            '人工智能': 'AI',
+            '芯片': '半导体',
+            '智能汽车': '汽车'
+        }
+        
+        sentiment_boosters = [
+            '利好', '上涨', '大涨', '飙升', '受益', '提振', '推动', '走强', '上行', '回暖',
+            '利空', '下跌', '大跌', '暴跌', '风险', '担忧', '冲击', '拖累', '走弱', '下行'
+        ]
+        
+        source_credibility = {
+            '财联社电报': 1.0,
+            '新浪财经': 0.9,
+            '东方财富': 0.8,
+            '东方财富公告': 0.9,
+            '东方财富快讯': 0.7,
+            'AKShare公告': 0.9,
+            '新浪国际新闻': 0.85,
+            '路透中文网': 0.95,
+            '界面新闻': 0.85,
+            '第一财经': 0.9,
+            '证券时报': 0.85,
+            '今日头条热点': 0.5,
+            '抖音热点': 0.4,
+            '小红书热点': 0.4,
+            '微博热搜': 0.4
+        }
+        
+        event_to_industry = {
+            '高温': ['家电', '电力', '新能源'],
+            '热浪': ['家电', '电力', '新能源'],
+            '干旱': ['农业', '电力', '水利'],
+            '洪水': ['建材', '保险', '水利'],
+            '地震': ['建材', '保险', '基建'],
+            '寒潮': ['家电', '电力', '天然气'],
+            '暴雪': ['建材', '保险', '能源'],
+            '台风': ['建材', '保险', '港口'],
+            '疫情': ['医药', '医疗器械', '疫苗'],
+            '病毒': ['医药', '疫苗', '医疗器械'],
+            '降息': ['房地产', '银行', '证券', '消费'],
+            '降准': ['房地产', '银行', '证券', '消费'],
+            '加息': ['银行', '保险', '债券'],
+            '关税': ['出口', '外贸', '汽车', '消费'],
+            '贸易战': ['出口', '外贸', '半导体'],
+            '制裁': ['半导体', '科技', '军工'],
+            '禁运': ['半导体', '稀土', '军工'],
+            '减产': ['石油', '煤炭', '钢铁'],
+            '涨价潮': ['消费', '化工', '原材料'],
+            '补贴': ['新能源', '汽车', '消费'],
+            '退税': ['出口', '外贸'],
+            '限购': ['房地产'],
+            '购物节': ['消费', '电商'],
+            '世界杯': ['体育', '消费', '啤酒'],
+            '奥运会': ['体育', '消费'],
+            '春运': ['交通', '消费'],
+            '开学季': ['消费', '文具'],
+            '毕业季': ['消费', '旅游'],
+            '缺芯': ['半导体', '汽车'],
+            '芯片荒': ['半导体', '汽车'],
+            '电力短缺': ['电力', '新能源'],
+            '停电': ['电力', '新能源'],
+            '限电': ['电力', '新能源'],
+            '能耗双控': ['化工', '电力'],
+            '产能过剩': ['钢铁', '化工'],
+            '产能不足': ['半导体', '新能源'],
+            '订单增加': ['消费', '制造业'],
+            '订单减少': ['消费', '制造业'],
+            '销量大增': ['消费', '汽车'],
+            '销量下滑': ['消费', '汽车'],
+            '业绩大增': ['消费', '科技'],
+            '业绩下滑': ['消费', '科技'],
+            '监管': ['金融', '互联网'],
+            '反垄断': ['互联网', '科技'],
+            '数据安全': ['互联网', '科技'],
+            '隐私保护': ['互联网', '科技'],
+            '军演': ['军工'],
+            '国产替代': ['半导体', '科技'],
+            '自主可控': ['半导体', '科技'],
+            '进口替代': ['半导体', '科技'],
+            '出海': ['消费', '科技'],
+            '国际化': ['消费', '科技'],
+            '出口增长': ['消费', '制造业'],
+            '出口下降': ['消费', '制造业'],
+            '地缘': ['军工', '能源'],
+            '冲突': ['军工', '能源'],
+            '战争': ['军工', '能源'],
+            '通胀': ['金融', '消费'],
+            '通缩': ['金融', '消费'],
+            '失业率': ['金融', '消费'],
+            '就业': ['金融', '消费'],
+            '消费复苏': ['消费', '零售'],
+            '内需': ['消费', '零售'],
+            '刺激消费': ['消费', '零售'],
+            '促销费': ['消费', '零售'],
+            '家电下乡': ['消费', '家电'],
+            '以旧换新': ['消费', '家电'],
+            '绿色消费': ['消费', '新能源'],
+            '低空经济': ['航空', '科技'],
+            '低空飞行': ['航空', '科技'],
+            '无人机配送': ['物流', '科技'],
+        }
+        
+        news_count = len(news_list)
         
         for news in news_list:
             title = news['title']
             description = news.get('description', '')
             text = title + ' ' + description
+            
+            source = news.get('source', '')
+            credibility = source_credibility.get(source, 0.5)
+            
+            if credibility < 0.3:
+                continue
+            
             sentiment = self.analyze_sentiment(text)
             
-            for keyword in industry_keywords:
+            has_positive_booster = any(booster in text for booster in sentiment_boosters[:10])
+            has_negative_booster = any(booster in text for booster in sentiment_boosters[10:])
+            
+            if has_positive_booster:
+                sentiment = min(sentiment + 0.2, 1.0)
+            if has_negative_booster:
+                sentiment = max(sentiment - 0.2, -1.0)
+            
+            matched_keywords = []
+            for keyword in standalone_keywords:
                 if keyword in text:
-                    if keyword not in keyword_sentiments:
-                        keyword_sentiments[keyword] = {'count': 0, 'positive': 0, 'negative': 0, 'neutral': 0, 'related_news': []}
-                    keyword_sentiments[keyword]['count'] += 1
-                    if sentiment > 0.1:
-                        keyword_sentiments[keyword]['positive'] += 1
-                    elif sentiment < -0.1:
-                        keyword_sentiments[keyword]['negative'] += 1
-                    else:
-                        keyword_sentiments[keyword]['neutral'] += 1
-                    if len(keyword_sentiments[keyword]['related_news']) < 3:
-                        keyword_sentiments[keyword]['related_news'].append({
-                            'title': title,
-                            'sentiment': sentiment,
-                            'time': news.get('time', '')
-                        })
+                    matched_keywords.append(keyword)
+            
+            for alias, main_keyword in keyword_aliases.items():
+                if alias in text and main_keyword not in matched_keywords:
+                    matched_keywords.append(main_keyword)
+            
+            event_triggered_industries = []
+            for event_keyword, industries in event_to_industry.items():
+                if event_keyword in text:
+                    for industry in industries:
+                        if industry not in matched_keywords and industry not in event_triggered_industries:
+                            event_triggered_industries.append(industry)
+            
+            matched_keywords.extend(event_triggered_industries)
+            
+            for keyword in matched_keywords:
+                if keyword not in keyword_sentiments:
+                    keyword_sentiments[keyword] = {'count': 0, 'weighted_count': 0, 'positive': 0, 'negative': 0, 'neutral': 0, 'related_news': [], 'sources': {}}
+                keyword_sentiments[keyword]['count'] += 1
+                keyword_sentiments[keyword]['weighted_count'] += credibility
+                if sentiment > 0.1:
+                    keyword_sentiments[keyword]['positive'] += credibility
+                elif sentiment < -0.1:
+                    keyword_sentiments[keyword]['negative'] += credibility
+                else:
+                    keyword_sentiments[keyword]['neutral'] += credibility
+                if source not in keyword_sentiments[keyword]['sources']:
+                    keyword_sentiments[keyword]['sources'][source] = 0
+                keyword_sentiments[keyword]['sources'][source] += 1
+                if len(keyword_sentiments[keyword]['related_news']) < 3:
+                    keyword_sentiments[keyword]['related_news'].append({
+                        'title': title,
+                        'sentiment': sentiment,
+                        'time': news.get('time', ''),
+                        'source': source,
+                        'credibility': credibility
+                    })
         
         highlights = []
         for keyword, data in keyword_sentiments.items():
+            frequency_ratio = data['count'] / news_count if news_count > 0 else 0
+            
+            if frequency_ratio > 0.3:
+                continue
+            
+            if data['weighted_count'] < 0.5:
+                continue
+            
+            sentiment_score = (data['positive'] - data['negative']) / max(data['weighted_count'], 0.1)
+            
             highlights.append({
                 'keyword': keyword,
                 'count': data['count'],
-                'positive': data['positive'],
-                'negative': data['negative'],
-                'neutral': data['neutral'],
-                'related_news': data['related_news']
+                'weighted_count': round(data['weighted_count'], 2),
+                'positive': round(data['positive'], 2),
+                'negative': round(data['negative'], 2),
+                'neutral': round(data['neutral'], 2),
+                'sentiment_score': round(sentiment_score, 2),
+                'related_news': data['related_news'],
+                'frequency_ratio': round(frequency_ratio, 2),
+                'sources': data.get('sources', {}),
+                'importance': data['weighted_count'] + (data['positive'] - data['negative'])
             })
         
-        highlights.sort(key=lambda x: x['count'], reverse=True)
-        return highlights[:15]
+        highlights.sort(key=lambda x: (x['importance'], x['count']), reverse=True)
+        return highlights[:20]
     
     def fetch_stock_news(self, symbol, count=5):
         symbol = str(symbol).replace('.SS', '').replace('.SZ', '')

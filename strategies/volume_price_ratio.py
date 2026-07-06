@@ -5,6 +5,7 @@ class VolumePriceRatioStrategy:
     def __init__(self, period=20, threshold=1.5):
         self.period = period
         self.threshold = threshold
+        self.name = "量价比"
     
     def generate_signal(self, data):
         if len(data) < self.period + 1:

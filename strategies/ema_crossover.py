@@ -5,6 +5,7 @@ class EMACrossoverStrategy:
     def __init__(self, short_period=12, long_period=26):
         self.short_period = short_period
         self.long_period = long_period
+        self.name = "EMA"
     
     def generate_signal(self, data):
         if len(data) < self.long_period + 1:

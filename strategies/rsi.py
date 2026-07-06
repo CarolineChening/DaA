@@ -6,6 +6,7 @@ class RSIStrategy:
         self.period = period
         self.overbought = overbought
         self.oversold = oversold
+        self.name = "RSI"
     
     def generate_signal(self, data):
         if len(data) < self.period + 1:

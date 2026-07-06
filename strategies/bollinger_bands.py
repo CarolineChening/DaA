@@ -5,6 +5,7 @@ class BollingerBandsStrategy:
     def __init__(self, period=20, num_std=2):
         self.period = period
         self.num_std = num_std
+        self.name = "布林带"
     
     def generate_signal(self, data):
         if len(data) < self.period:

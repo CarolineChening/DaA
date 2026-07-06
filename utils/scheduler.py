@@ -10,6 +10,7 @@ class ReminderScheduler:
         self.is_running = False
         self.thread = None
         self.last_triggered = {}
+        self.recent_notifications = []
         
     def add_daily_reminder(self, hour, minute, callback, label=""):
         key = f"{hour:02d}:{minute:02d}"
@@ -26,8 +27,22 @@ class ReminderScheduler:
     def _run_callback(self, callback, label):
         try:
             callback(label)
+            now = get_beijing_time()
+            notification = {
+                'id': len(self.recent_notifications) + 1,
+                'label': label,
+                'timestamp': now.isoformat(),
+                'time_str': now.strftime('%Y-%m-%d %H:%M:%S'),
+                'type': 'reminder'
+            }
+            self.recent_notifications.insert(0, notification)
+            if len(self.recent_notifications) > 20:
+                self.recent_notifications = self.recent_notifications[:20]
         except Exception as e:
             print(f"⚠️ 定时任务执行失败: {e}")
+    
+    def get_recent_notifications(self, since_id=0):
+        return [n for n in self.recent_notifications if n['id'] > since_id]
     
     def start(self):
         if self.is_running:

@@ -5,6 +5,7 @@ class MovingAverageStrategy:
     def __init__(self, short_window=5, long_window=20):
         self.short_window = short_window
         self.long_window = long_window
+        self.name = "均线"
     
     def generate_signal(self, data):
         if len(data) < self.long_window:

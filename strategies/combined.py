@@ -8,6 +8,7 @@ from .nine_turns import NineTurnsStrategy
 
 class CombinedStrategy:
     def __init__(self):
+        self.name = "综合"
         self.strategies = [
             MovingAverageStrategy(),
             MACDStrategy(),

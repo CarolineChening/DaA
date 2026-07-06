@@ -1,3 +1,5 @@
+import os
+import json
 from datetime import datetime
 from utils.time_utils import get_beijing_time, format_beijing_time
 from .capital_allocation import CapitalAllocation
@@ -7,12 +9,55 @@ class TradingRules:
         self.trailing_stop_pct = 10
         self.max_position_size = 0.2
         self.max_daily_trades = 3
-        self.total_capital = 100000.0
-        
+        self.initial_capital = 100000.0
+
+        self.account_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'account.json')
+        self.available_cash = self._load_cash()
+
         self.today_trades = []
-        
+
         self.capital_allocation = CapitalAllocation()
-    
+
+    def _load_cash(self):
+        try:
+            with open(self.account_file, 'r') as f:
+                account = json.load(f)
+                return float(account.get('cash', 73855.0))
+        except Exception:
+            return 73855.0
+
+    def _save_cash(self):
+        try:
+            with open(self.account_file, 'r') as f:
+                account = json.load(f)
+        except Exception:
+            account = {'total_amount': 100000, 'initial_amount': 50000}
+        account['cash'] = round(self.available_cash, 2)
+        account['last_updated'] = get_beijing_time().isoformat()
+        with open(self.account_file, 'w') as f:
+            json.dump(account, f, indent=2)
+
+    def deduct_cash(self, amount):
+        if amount > self.available_cash:
+            return False
+        self.available_cash -= amount
+        self._save_cash()
+        return True
+
+    def add_cash(self, amount):
+        self.available_cash += amount
+        self._save_cash()
+
+    def get_max_buyable_quantity(self, price):
+        if price <= 0:
+            return 0
+        max_lots = int(self.available_cash / price) // 100
+        return max_lots * 100
+
+    def set_available_cash(self, cash):
+        self.available_cash = float(cash)
+        self._save_cash()
+
     def set_parameters(self, params):
         if 'trailing_stop_pct' in params:
             self.trailing_stop_pct = params['trailing_stop_pct']
@@ -20,8 +65,10 @@ class TradingRules:
             self.max_position_size = params['max_position_size']
         if 'max_daily_trades' in params:
             self.max_daily_trades = params['max_daily_trades']
-        if 'total_capital' in params:
-            self.total_capital = params['total_capital']
+        if 'available_cash' in params:
+            self.set_available_cash(params['available_cash'])
+        if 'initial_capital' in params:
+            self.initial_capital = params['initial_capital']
     
     def check_trailing_stop(self, current_price, highest_price):
         if highest_price <= 0:
@@ -77,39 +124,41 @@ class TradingRules:
     
     def get_rules_summary(self):
         return {
-            '总资金': f'{self.total_capital:.2f} 元',
             '追踪止损': f'{self.trailing_stop_pct}% (最高价)',
             '最大仓位': f'{self.max_position_size * 100}%',
             '每日最大交易次数': self.max_daily_trades
         }
     
-    def calculate_deployment_suggestion(self, available_cash, recommendations):
+    def calculate_deployment_suggestion(self, available_cash, recommendations, total_capital=None):
+        if total_capital is None:
+            total_capital = self.available_cash
+            
         allocation = self.capital_allocation.calculate_allocation(
-            self.total_capital,
-            self.total_capital - available_cash,
+            total_capital,
+            total_capital - available_cash,
             recommendations
         )
         
-        portfolio_value = self.total_capital - available_cash
-        max_total_position = self.total_capital * 0.5
+        portfolio_value = total_capital - available_cash
+        max_total_position = total_capital * 0.5
         remaining_capacity = max_total_position - portfolio_value
         
         if remaining_capacity <= 0:
             return {
                 'available_cash': round(available_cash, 2),
-                'total_capital': round(self.total_capital, 2),
+                'total_capital': round(total_capital, 2),
                 'suggestions': [],
                 'remaining_after_deployment': available_cash,
                 'deployment_ratio': 0,
                 'deployable_cash': 0,
                 'allocation_summary': {
-                    '提示': f'当前仓位 {round(portfolio_value / self.total_capital * 100, 1)}%，已达上限50%，建议观望'
+                    '提示': f'当前仓位 {round(portfolio_value / total_capital * 100, 1)}%，已达上限50%，建议观望'
                 },
                 'aggressive_amount': 0,
                 'conservative_amount': 0,
                 'reserve_amount': available_cash,
                 'max_position_limit': 0.5,
-                'current_position_pct': round(portfolio_value / self.total_capital * 100, 1),
+                'current_position_pct': round(portfolio_value / total_capital * 100, 1),
                 'remaining_capacity': 0
             }
         
@@ -134,7 +183,7 @@ class TradingRules:
                     'current_price': rec.get('current_price', 0),
                     'suggested_quantity': quantity,
                     'suggested_amount': round(actual_amount, 2),
-                    'allocation_pct': round(actual_amount / self.total_capital * 100, 2),
+                    'allocation_pct': round(actual_amount / total_capital * 100, 2),
                     'reason': rec.get('reasoning', ['综合评分较高']),
                     'combined_score': rec.get('combined_score', 0),
                     'signal': rec.get('final_signal', 'buy'),
@@ -162,7 +211,7 @@ class TradingRules:
                     'current_price': rec.get('current_price', 0),
                     'suggested_quantity': quantity,
                     'suggested_amount': round(actual_amount, 2),
-                    'allocation_pct': round(actual_amount / self.total_capital * 100, 2),
+                    'allocation_pct': round(actual_amount / total_capital * 100, 2),
                     'reason': rec.get('reasoning', ['综合评分较高']),
                     'combined_score': rec.get('combined_score', 0),
                     'signal': rec.get('final_signal', 'buy'),
@@ -172,13 +221,13 @@ class TradingRules:
                 })
                 total_suggested += actual_amount
         
-        new_position_pct = round((portfolio_value + total_suggested) / self.total_capital * 100, 1)
+        new_position_pct = round((portfolio_value + total_suggested) / total_capital * 100, 1)
         
         allocation_summary = {
             '激进策略': f'¥{round(allocation["aggressive_amount"], 2)} ({round(self.capital_allocation.aggressive_ratio * 100, 1)}%) - 短线追高、热点强势股',
             '稳健策略': f'¥{round(allocation["conservative_amount"], 2)} ({round(self.capital_allocation.conservative_ratio * 100, 1)}%) - 基本面投资、产业链潜力股',
             '预留资金': f'¥{round(allocation["reserve_amount"], 2)} ({round(self.capital_allocation.reserve_ratio * 100, 1)}%) - 应对突发机会',
-            '仓位控制': f'当前 {round(portfolio_value / self.total_capital * 100, 1)}% → 建议 {new_position_pct}%（上限50%）'
+            '仓位控制': f'当前 {round(portfolio_value / total_capital * 100, 1)}% → 建议 {new_position_pct}%（上限50%）'
         }
         
         if not all_suggestions:
@@ -188,7 +237,7 @@ class TradingRules:
         
         return {
             'available_cash': round(available_cash, 2),
-            'total_capital': round(self.total_capital, 2),
+            'total_capital': round(total_capital, 2),
             'suggestions': all_suggestions,
             'remaining_after_deployment': round(available_cash - total_suggested, 2),
             'deployment_ratio': round(total_suggested / available_cash, 2) if available_cash > 0 else 0,
@@ -198,7 +247,7 @@ class TradingRules:
             'conservative_amount': round(allocation['conservative_amount'], 2),
             'reserve_amount': round(allocation['reserve_amount'], 2),
             'max_position_limit': 0.5,
-            'current_position_pct': round(portfolio_value / self.total_capital * 100, 1),
+            'current_position_pct': round(portfolio_value / total_capital * 100, 1),
             'remaining_capacity': round(remaining_capacity, 2),
             'new_position_pct': new_position_pct
         }

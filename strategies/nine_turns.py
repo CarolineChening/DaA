@@ -4,6 +4,9 @@ import numpy as np
 class NineTurnsStrategy:
     def __init__(self):
         self.name = "神奇九转"
+        self.buy_threshold = 6
+        self.sell_threshold = 6
+        self.signal_persistence = 2
     
     def generate_signal(self, data):
         if len(data) < 13:
@@ -16,14 +19,33 @@ class NineTurnsStrategy:
         buy_count = latest.get('buy_count', 0)
         sell_count = latest.get('sell_count', 0)
         
-        if buy_count == 9:
-            return 'buy', 9
-        elif sell_count == 9:
-            return 'sell', 9
-        elif buy_count >= 8:
-            return 'buy', buy_count
-        elif sell_count >= 8:
-            return 'sell', sell_count
+        max_buy_count_recent = 0
+        max_sell_count_recent = 0
+        for i in range(-self.signal_persistence - 1, 0):
+            if i >= -len(data_copy):
+                max_buy_count_recent = max(max_buy_count_recent, data_copy['buy_count'].iloc[i])
+                max_sell_count_recent = max(max_sell_count_recent, data_copy['sell_count'].iloc[i])
+        
+        signal_score = 0
+        
+        if buy_count >= self.buy_threshold:
+            signal_score = buy_count
+        elif max_buy_count_recent >= self.buy_threshold:
+            signal_score = max_buy_count_recent - 1
+        
+        if sell_count >= self.sell_threshold:
+            signal_score = -sell_count
+        elif max_sell_count_recent >= self.sell_threshold:
+            signal_score = -(max_sell_count_recent - 1)
+        
+        if signal_score >= self.buy_threshold:
+            return 'buy', signal_score
+        elif signal_score <= -self.sell_threshold:
+            return 'sell', abs(signal_score)
+        elif signal_score >= 4:
+            return 'buy', signal_score
+        elif signal_score <= -4:
+            return 'sell', abs(signal_score)
         else:
             return 'hold', max(buy_count, sell_count)
     

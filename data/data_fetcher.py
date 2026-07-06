@@ -172,13 +172,17 @@ class DataFetcher:
             content = response.text
             
             if content and '=' in content:
-                parts = content.split('~')
-                if len(parts) > 3:
-                    price = float(parts[3])
-                    high_today = float(parts[32]) if len(parts) > 32 else price
-                    stock_name = parts[1] if len(parts) > 1 else 'Unknown'
-                    print(f"✅ 腾讯财经实时抓取: {stock_name} ({symbol}) = ¥{price}, 今日最高 ¥{high_today}")
-                    return {'price': price, 'high_today': high_today}
+                        parts = content.split('~')
+                        if len(parts) > 3:
+                            price = float(parts[3])
+                            high_today = float(parts[33]) if len(parts) > 33 else price
+                            low_today = float(parts[34]) if len(parts) > 34 else price
+                            change = float(parts[31]) if len(parts) > 31 else 0
+                            change_percent = float(parts[32]) if len(parts) > 32 else 0
+                            prev_close = float(parts[4]) if len(parts) > 4 else price
+                            stock_name = parts[1] if len(parts) > 1 else 'Unknown'
+                            print(f"✅ 腾讯财经实时抓取: {stock_name} ({symbol}) = ¥{price}, 涨跌 {change_percent}%, 今日最高 ¥{high_today}")
+                            return {'price': price, 'high_today': high_today, 'low_today': low_today, 'change': change, 'change_percent': change_percent, 'prev_close': prev_close}
             else:
                 print(f"⚠️ 腾讯财经API返回空数据: {symbol}")
         except Exception as e:
@@ -351,9 +355,13 @@ class DataFetcher:
                     realtime_price = realtime_data['price'] if isinstance(realtime_data, dict) else realtime_data
                     high_today = realtime_data['high_today'] if isinstance(realtime_data, dict) else None
                     
-                    prev_close = data.iloc[-2]['close'] if len(data) > 1 else latest['close']
-                    change = latest['close'] - prev_close
-                    change_percent = (change / prev_close * 100) if prev_close != 0 else 0
+                    if isinstance(realtime_data, dict) and 'change_percent' in realtime_data:
+                        change = realtime_data['change']
+                        change_percent = realtime_data['change_percent']
+                    else:
+                        prev_close = data.iloc[-2]['close'] if len(data) > 1 else latest['close']
+                        change = latest['close'] - prev_close
+                        change_percent = (change / prev_close * 100) if prev_close != 0 else 0
                     
                     purchase_date = stock.get('purchase_date')
                     if purchase_date and not data.empty:
@@ -385,7 +393,8 @@ class DataFetcher:
                         'market_value': stock['quantity'] * (realtime_price if realtime_price else latest['close']),
                         'profit': stock['quantity'] * ((realtime_price if realtime_price else latest['close']) - stock['cost_price']),
                         'profit_percent': (((realtime_price if realtime_price else latest['close']) - stock['cost_price']) / stock['cost_price'] * 100) if stock['cost_price'] != 0 else 0,
-                        'high_since_purchase': high_since_purchase
+                        'high_since_purchase': high_since_purchase,
+                        'trailing_stop_pct': stock.get('trailing_stop_pct', 10)
                     })
                 else:
                     portfolio_data.append({

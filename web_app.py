@@ -35,6 +35,13 @@ import socket
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'stock_strategy_key'
 
+@app.after_request
+def add_cache_control(response):
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
 config = Config()
 data_fetcher = DataFetcher()
 news_fetcher = NewsFetcher()
@@ -51,8 +58,7 @@ strategies = [
     RSIStrategy(period=14, overbought=70, oversold=30),
     BollingerBandsStrategy(period=20, num_std=2),
     VolumePriceRatioStrategy(period=20, threshold=1.5),
-    NineTurnsStrategy(),
-    CombinedStrategy()
+    NineTurnsStrategy()
 ]
 trading_rules = TradingRules()
 research_analyst = ResearchAnalyst()
@@ -70,29 +76,65 @@ def test():
 def get_portfolio():
     portfolio = config.get_portfolio()
     portfolio_data = data_fetcher.get_portfolio_data(portfolio)
-    
+
     total_value = sum(p['market_value'] for p in portfolio_data)
     total_cost = sum(p['quantity'] * p['cost_price'] for p in portfolio_data)
     total_profit = sum(p['profit'] for p in portfolio_data)
-    
+
     return jsonify({
         'stocks': portfolio_data,
         'total_value': round(total_value, 2),
         'total_cost': round(total_cost, 2),
         'total_profit': round(total_profit, 2),
-        'total_profit_percent': round((total_profit / total_cost * 100) if total_cost > 0 else 0, 2)
+        'total_profit_percent': round((total_profit / total_cost * 100) if total_cost > 0 else 0, 2),
+        'available_cash': round(trading_rules.available_cash, 2)
     })
 
 @app.route('/api/add_stock', methods=['POST'])
 def add_stock():
     data = request.json
-    config.add_stock_to_portfolio({
-        'symbol': data['symbol'].upper(),
-        'name': data['name'],
-        'quantity': int(data['quantity']),
-        'cost_price': float(data['cost_price'])
+    symbol = data['symbol'].upper()
+    name = data['name']
+    quantity = int(data['quantity'])
+    cost_price = float(data['cost_price'])
+
+    max_qty = trading_rules.get_max_buyable_quantity(cost_price)
+    original_qty = quantity
+    if quantity > max_qty:
+        quantity = max_qty
+    if quantity < 100:
+        return jsonify({'success': False, 'error': f'可用资金 ¥{trading_rules.available_cash:.2f} 不足，当前最多可买 {max_qty} 股（需≥100股）'})
+
+    actual_cost = quantity * cost_price
+    if not trading_rules.deduct_cash(actual_cost):
+        return jsonify({'success': False, 'error': '可用资金扣减失败'})
+
+    existing_stock = next((s for s in config.PORTFOLIO if s['symbol'].upper() == symbol), None)
+    if existing_stock:
+        existing_qty = existing_stock['quantity']
+        existing_cost = existing_stock['cost_price']
+        new_total_qty = existing_qty + quantity
+        new_avg_cost = (existing_qty * existing_cost + quantity * cost_price) / new_total_qty
+        existing_stock['quantity'] = new_total_qty
+        existing_stock['cost_price'] = round(new_avg_cost, 3)
+        config.save_portfolio()
+        action = '加仓'
+    else:
+        config.add_stock_to_portfolio({
+            'symbol': symbol,
+            'name': name,
+            'quantity': quantity,
+            'cost_price': cost_price
+        })
+        action = '新建'
+
+    return jsonify({
+        'success': True,
+        'available_cash': round(trading_rules.available_cash, 2),
+        'adjusted_quantity': quantity,
+        'adjusted': quantity != original_qty,
+        'action': action
     })
-    return jsonify({'success': True})
 
 @app.route('/api/add_position', methods=['POST'])
 def add_position():
@@ -100,8 +142,52 @@ def add_position():
     symbol = data['symbol'].upper()
     quantity = int(data['quantity'])
     price = float(data['price'])
-    config.add_position_to_stock(symbol, quantity, price)
-    return jsonify({'success': True})
+
+    max_qty = trading_rules.get_max_buyable_quantity(price)
+    original_qty = quantity
+    if quantity > max_qty:
+        quantity = max_qty
+    if quantity < 100:
+        return jsonify({'success': False, 'error': f'可用资金 ¥{trading_rules.available_cash:.2f} 不足，当前最多可买 {max_qty} 股（需≥100股）'})
+
+    actual_cost = quantity * price
+    if not trading_rules.deduct_cash(actual_cost):
+        return jsonify({'success': False, 'error': '可用资金扣减失败'})
+
+    try:
+        config.add_position_to_stock(symbol, quantity, price)
+    except ValueError as e:
+        trading_rules.add_cash(actual_cost)
+        return jsonify({'success': False, 'error': str(e)})
+
+    return jsonify({
+        'success': True,
+        'available_cash': round(trading_rules.available_cash, 2),
+        'adjusted_quantity': quantity,
+        'adjusted': quantity != original_qty
+    })
+
+@app.route('/api/sell_stock', methods=['POST'])
+def sell_stock():
+    data = request.json
+    symbol = data['symbol'].upper()
+    price = float(data['price'])
+
+    stock = next((s for s in config.PORTFOLIO if s['symbol'].upper() == symbol), None)
+    if not stock:
+        return jsonify({'success': False, 'error': '股票不在持仓中'})
+
+    if price <= 0:
+        return jsonify({'success': False, 'error': '卖出价格必须大于0'})
+
+    proceeds = stock['quantity'] * price
+    trading_rules.add_cash(proceeds)
+    config.remove_stock_from_portfolio(symbol)
+    return jsonify({
+        'success': True,
+        'available_cash': round(trading_rules.available_cash, 2),
+        'proceeds': round(proceeds, 2)
+    })
 
 @app.route('/api/remove_stock', methods=['POST'])
 def remove_stock():
@@ -114,6 +200,15 @@ def get_analysis():
     portfolio = config.get_portfolio()
     news = news_fetcher.fetch_general_news()
     market_sentiment = news_fetcher.get_market_sentiment()
+    
+    portfolio_data = data_fetcher.get_portfolio_data(portfolio)
+    total_position_value = sum(p['market_value'] for p in portfolio_data)
+    available_cash = trading_rules.available_cash
+    total_capital = available_cash + total_position_value
+    total_position_pct = total_position_value / total_capital * 100
+    max_total_position = total_capital * 0.5
+    remaining_capacity = max_total_position - total_position_value
+    has_deployment_suggestions = False
     
     def analyze_stock(stock):
         try:
@@ -140,6 +235,22 @@ def get_analysis():
                     'turn_count': int(turn_count)
                 })
             
+            historical_buy_signals = 0
+            historical_sell_signals = 0
+            for days_ago in range(1, 4):
+                if len(data) > days_ago:
+                    historical_data = data.iloc[:-days_ago]
+                    for strategy in strategies:
+                        result = strategy.generate_signal(historical_data)
+                        if isinstance(result, tuple):
+                            h_signal, _ = result
+                        else:
+                            h_signal = result
+                        if h_signal == 'buy':
+                            historical_buy_signals += 0.5
+                        elif h_signal == 'sell':
+                            historical_sell_signals += 0.5
+            
             realtime_data = data_fetcher.get_realtime_price(stock['symbol'])
             current_price = realtime_data['price'] if isinstance(realtime_data, dict) else realtime_data
             if current_price is None:
@@ -148,7 +259,23 @@ def get_analysis():
             buy_count = sum(1 for s in signals if s['signal'] == 'buy')
             sell_count = sum(1 for s in signals if s['signal'] == 'sell')
             
+            effective_buy_count = buy_count + historical_buy_signals
+            effective_sell_count = sell_count + historical_sell_signals
+            
+            current_position_value = stock['quantity'] * current_price
+            max_position_value = total_capital * trading_rules.max_position_size
+            position_pct = current_position_value / total_capital * 100
+            is_position_full = position_pct >= trading_rules.max_position_size * 100 * 0.95
+            
+            total_signal_score = sum(s.get('turn_count', 0) for s in signals if s['signal'] == 'buy') - sum(s.get('turn_count', 0) for s in signals if s['signal'] == 'sell')
+            
             reasoning = []
+            is_held = stock.get('quantity', 0) > 0
+            
+            if historical_buy_signals > 0:
+                reasoning.append(f"📊 近3天历史买入信号: {historical_buy_signals}")
+            if historical_sell_signals > 0:
+                reasoning.append(f"📊 近3天历史卖出信号: {historical_sell_signals}")
             
             if stock_sentiment > 0.1:
                 reasoning.append(f"个股新闻情绪看多 (得分: {stock_sentiment:.2f})")
@@ -171,40 +298,90 @@ def get_analysis():
             else:
                 reasoning.append(f"财务状况存在风险 (评分: {financial_health.get('score', 0)}/{financial_health.get('max_score', 6)})")
             
-            if buy_count >= 2:
-                reasoning.append(f"技术指标: {buy_count}个策略发出买入信号")
-            elif sell_count >= 2:
-                reasoning.append(f"技术指标: {sell_count}个策略发出卖出信号")
-            else:
-                reasoning.append(f"技术指标: 信号不明确")
+            for s in signals:
+                if s['signal'] == 'buy':
+                    strength = s.get('turn_count', 0)
+                    if strength > 0:
+                        reasoning.append(f"✅ {s['strategy']}: 买入信号 (强度: {strength})")
+                    else:
+                        reasoning.append(f"✅ {s['strategy']}: 买入信号")
+                elif s['signal'] == 'sell':
+                    strength = s.get('turn_count', 0)
+                    if strength > 0:
+                        reasoning.append(f"❌ {s['strategy']}: 卖出信号 (强度: {strength})")
+                    else:
+                        reasoning.append(f"❌ {s['strategy']}: 卖出信号")
             
-            combined_score = 0
-            if buy_count >= 2:
-                combined_score += 1
-            if sell_count >= 2:
-                combined_score -= 1
+            combined_score = total_signal_score * 0.3
+            
+            if buy_count >= 1:
+                combined_score += 0.5 * buy_count
+            if sell_count >= 1:
+                combined_score -= 0.5 * sell_count
             if stock_sentiment > 0.1:
-                combined_score += 0.5
-            elif stock_sentiment < -0.1:
-                combined_score -= 0.5
-            if research_view['sentiment_score'] > 0.3:
-                combined_score += 0.4
-            elif research_view['sentiment_score'] < -0.3:
-                combined_score -= 0.4
-            if financial_health.get('health_level') == '健康':
                 combined_score += 0.3
-            elif financial_health.get('health_level') == '风险':
+            elif stock_sentiment < -0.1:
                 combined_score -= 0.3
+            if research_view['sentiment_score'] > 0.3:
+                combined_score += 0.2
+            elif research_view['sentiment_score'] < -0.3:
+                combined_score -= 0.2
+            if financial_health.get('health_level') == '健康':
+                combined_score += 0.2
+            elif financial_health.get('health_level') == '风险':
+                combined_score -= 0.2
             
-            if combined_score > 0.5:
-                final_signal = 'buy'
-                conclusion = '技术面偏多，可关注；观望等待更好时机也是合理选择。'
-            elif combined_score < -0.5:
-                final_signal = 'sell'
-                conclusion = '综合分析后，建议卖出该股票。'
+            if is_held:
+                is_total_position_full = total_position_pct >= 48
+                
+                if is_position_full or is_total_position_full:
+                    if sell_count >= 1 or combined_score < -0.5:
+                        final_signal = 'sell'
+                        if is_total_position_full:
+                            conclusion = f'综合分析后，建议卖出该股票。当前总仓位 {total_position_pct:.1f}% 已接近上限50%，且有卖出信号。'
+                        else:
+                            conclusion = f'综合分析后，建议卖出该股票。当前仓位 {position_pct:.1f}% 已接近上限 {trading_rules.max_position_size * 100}%，且有卖出信号。'
+                    else:
+                        final_signal = 'hold'
+                        if is_total_position_full:
+                            conclusion = f'⚠️ 当前总仓位 {total_position_pct:.1f}% 已接近上限50%，虽有买入信号但受总仓位限制，建议持有观察。'
+                        else:
+                            conclusion = f'⚠️ 当前仓位 {position_pct:.1f}% 已接近上限 {trading_rules.max_position_size * 100}%，虽有买入信号但受仓位限制，建议持有观察。'
+                    if is_total_position_full:
+                        reasoning.insert(0, f'📌 当前总仓位 {total_position_pct:.1f}%，已接近总仓位上限50%')
+                    else:
+                        reasoning.insert(0, f'📌 当前仓位 {position_pct:.1f}%，已接近单只股票最大仓位限制 {trading_rules.max_position_size * 100}%')
+                elif effective_buy_count >= 8 and effective_sell_count == 0 and combined_score > 3.0:
+                    final_signal = 'add_position'
+                    conclusion = f'⚠️ 加仓信号: 当前{buy_count}个买入信号 + 近3天{historical_buy_signals}个历史信号，综合{effective_buy_count:.1f}，建议加仓！当前仓位 {position_pct:.1f}%，总仓位 {total_position_pct:.1f}%，仍有加仓空间。'
+                    reasoning.insert(0, f'📌 当前已持有，触发加仓条件（仓位 {position_pct:.1f}%，总仓位 {total_position_pct:.1f}%）')
+                elif buy_count >= 5 and sell_count == 0 and combined_score > 3.0:
+                    final_signal = 'add_position'
+                    conclusion = f'⚠️ 加仓信号: {buy_count}个技术指标发出买入信号，且无卖出信号，建议加仓！当前仓位 {position_pct:.1f}%，总仓位 {total_position_pct:.1f}%，仍有加仓空间。'
+                    reasoning.insert(0, f'📌 当前已持有，触发加仓条件（仓位 {position_pct:.1f}%，总仓位 {total_position_pct:.1f}%）')
+                elif effective_buy_count >= 10:
+                    final_signal = 'add_position'
+                    conclusion = f'⚠️ 强烈加仓信号: 综合{effective_buy_count:.1f}个买入信号，强烈建议加仓！当前仓位 {position_pct:.1f}%，总仓位 {total_position_pct:.1f}%，仍有加仓空间。'
+                    reasoning.insert(0, f'📌 当前已持有，触发强烈加仓条件（仓位 {position_pct:.1f}%，总仓位 {total_position_pct:.1f}%）')
+                elif combined_score > 0.5:
+                    final_signal = 'buy'
+                    conclusion = f'技术面偏多，可关注；当前仓位 {position_pct:.1f}%，总仓位 {total_position_pct:.1f}%，如需加仓请考虑仓位限制。观望等待更好时机也是合理选择。'
+                elif combined_score < -0.5:
+                    final_signal = 'sell'
+                    conclusion = '综合分析后，建议卖出该股票。'
+                else:
+                    final_signal = 'hold'
+                    conclusion = '综合分析后，建议继续持有观察。'
             else:
-                final_signal = 'hold'
-                conclusion = '综合分析后，建议继续持有观察。'
+                if buy_count >= 2 or combined_score > 1.0:
+                    final_signal = 'buy'
+                    conclusion = '技术面偏多，可关注；观望等待更好时机也是合理选择。'
+                elif sell_count >= 2 or combined_score < -1.0:
+                    final_signal = 'sell'
+                    conclusion = '综合分析后，建议卖出该股票。'
+                else:
+                    final_signal = 'hold'
+                    conclusion = '综合分析后，建议继续持有观察。'
             
             return {
                 'symbol': stock['symbol'],
@@ -453,15 +630,16 @@ def get_deployment():
     portfolio_data = data_fetcher.get_portfolio_data(portfolio)
     
     total_value = sum(p['market_value'] for p in portfolio_data)
-    available_cash = trading_rules.total_capital - total_value
+    available_cash = trading_rules.available_cash
+    total_capital = available_cash + total_value
     
     recommend_data = update_recommendations_cache()
     recommendations = recommend_data.get('recommendations', [])
     
-    deployment = trading_rules.calculate_deployment_suggestion(available_cash, recommendations)
+    deployment = trading_rules.calculate_deployment_suggestion(available_cash, recommendations, total_capital)
     
     return jsonify({
-        'total_capital': trading_rules.total_capital,
+        'total_capital': round(total_capital, 2),
         'portfolio_value': round(total_value, 2),
         'available_cash': round(available_cash, 2),
         'deployment': deployment
@@ -897,18 +1075,27 @@ def update_account():
         account['total_amount'] = data['total_amount']
     if 'cash' in data:
         account['cash'] = data['cash']
+        trading_rules.available_cash = float(data['cash'])
     save_account(account)
-    return jsonify({'success': True, 'account': account})
+    return jsonify({'success': True, 'account': account, 'available_cash': round(trading_rules.available_cash, 2)})
 
 @app.route('/api/reminders')
 def get_reminders():
     jobs = scheduler.get_scheduled_jobs()
     alerts = price_alert.get_alerts()
+    notifications = scheduler.get_recent_notifications()
     return jsonify({
         'running': scheduler.is_scheduler_running(),
         'scheduled_jobs': jobs,
-        'price_alerts': alerts
+        'price_alerts': alerts,
+        'notifications': notifications
     })
+
+@app.route('/api/reminders/notifications')
+def get_notifications():
+    since_id = request.args.get('since_id', 0, type=int)
+    notifications = scheduler.get_recent_notifications(since_id)
+    return jsonify({'notifications': notifications})
 
 @app.route('/api/reminders/add_alert', methods=['POST'])
 def add_price_alert():

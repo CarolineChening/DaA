@@ -7,8 +7,12 @@ __pycache__/
 .pytest_cache/
 .idea/
 .vscode/
+.trae/
 config/ngrok_config.json
 config/portfolio.json
+data/account.json
+data/portfolio.json
+data/config.json
 *.log
 logs/
 *.tmp
